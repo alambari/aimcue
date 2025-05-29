@@ -3,71 +3,60 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 
 void main() {
-  runApp(const AdvancedPoolAimApp());
+  runApp(const SimplePoolGuidelineApp());
 }
 
-class AdvancedPoolAimApp extends StatelessWidget {
-  const AdvancedPoolAimApp({super.key});
+class SimplePoolGuidelineApp extends StatelessWidget {
+  const SimplePoolGuidelineApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Advanced Pool Aim Assistant',
+      title: 'Simple Pool Guideline',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        scaffoldBackgroundColor: const Color(0xFF0F0F23),
+        primarySwatch: Colors.green,
+        scaffoldBackgroundColor: const Color(0xFF0D1B2A),
         brightness: Brightness.dark,
         cardTheme: CardTheme(
-          color: const Color(0xFF1A1A3A),
-          elevation: 8,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          color: const Color(0xFF1B263B),
+          elevation: 6,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
-      home: const AdvancedPoolController(),
+      home: const SimplePoolController(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class AdvancedPoolController extends StatefulWidget {
-  const AdvancedPoolController({super.key});
+class SimplePoolController extends StatefulWidget {
+  const SimplePoolController({super.key});
 
   @override
-  State<AdvancedPoolController> createState() => _AdvancedPoolControllerState();
+  State<SimplePoolController> createState() => _SimplePoolControllerState();
 }
 
-class _AdvancedPoolControllerState extends State<AdvancedPoolController> 
+class _SimplePoolControllerState extends State<SimplePoolController> 
     with WidgetsBindingObserver {
   
   static const platform = MethodChannel('pool_overlay/system');
   
-  // Permission & Status
+  // Core Status
   bool hasOverlayPermission = false;
-  bool isAssistantActive = false;
+  bool isGuidelineActive = false;
   String currentForegroundApp = 'Unknown';
-  String assistantStatus = 'Inactive';
+  String guidelineStatus = 'Inactive';
   
-  // Overlay Control Status
+  // Table Control Status
   bool isResizeMode = false;
   bool isTableLocked = true;
   Map<String, dynamic> tableRect = {};
-  Map<String, dynamic> overlayStatus = {};
   
-  // Advanced Settings
-  double shotPower = 0.5;
-  double spinX = 0.0;
-  double spinY = 0.0;
-  bool showCushionShots = true;
-  bool showPowerIndicator = true;
-  
-  // Detection Stats
+  // Simple Stats
   int poolGamesDetected = 0;
   int sessionsCompleted = 0;
-  String lastPoolGameDetected = 'None';
-  int totalShotsAnalyzed = 0;
   
   Timer? statusTimer;
-  Timer? overlayStatusTimer;
 
   @override
   void initState() {
@@ -80,31 +69,26 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     statusTimer?.cancel();
-    overlayStatusTimer?.cancel();
     super.dispose();
   }
 
   void _initializeApp() async {
     await _checkOverlayPermission();
     _startStatusMonitoring();
-    _startOverlayStatusMonitoring();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     
-    if (state == AppLifecycleState.paused && isAssistantActive) {
+    if (state == AppLifecycleState.paused && isGuidelineActive) {
       setState(() {
-        assistantStatus = 'Monitoring background apps...';
+        guidelineStatus = 'Monitoring in background...';
       });
     } else if (state == AppLifecycleState.resumed) {
       setState(() {
-        assistantStatus = isAssistantActive ? 'Active - Ready for pool games' : 'Inactive';
+        guidelineStatus = isGuidelineActive ? 'Active - Ready for pool games' : 'Inactive';
       });
-      if (isAssistantActive) {
-        _updateOverlayStatus();
-      }
     }
   }
 
@@ -135,16 +119,8 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
     });
   }
 
-  void _startOverlayStatusMonitoring() {
-    overlayStatusTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (isAssistantActive) {
-        _updateOverlayStatus();
-      }
-    });
-  }
-
   Future<void> _updateStatus() async {
-    if (!isAssistantActive) return;
+    if (!isGuidelineActive) return;
     
     try {
       final String? foregroundApp = await platform.invokeMethod('getForegroundApp');
@@ -153,40 +129,28 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
           currentForegroundApp = foregroundApp;
           
           if (_isPoolGame(foregroundApp)) {
-            assistantStatus = 'Active - Analyzing ${_getGameName(foregroundApp)}';
-            lastPoolGameDetected = _getGameName(foregroundApp);
+            guidelineStatus = 'Active - Detecting ${_getGameName(foregroundApp)}';
             if (poolGamesDetected == 0) poolGamesDetected = 1;
           } else {
-            assistantStatus = 'Monitoring - Waiting for pool game';
+            guidelineStatus = 'Monitoring - Waiting for pool game';
+          }
+        });
+      }
+
+      // Update table status
+      final Map<dynamic, dynamic>? overlayStatus = await platform.invokeMethod('getOverlayStatus');
+      if (overlayStatus != null) {
+        setState(() {
+          isResizeMode = overlayStatus['isResizeMode'] ?? false;
+          isTableLocked = overlayStatus['isTableLocked'] ?? true;
+          
+          if (overlayStatus['tableRect'] != null) {
+            tableRect = Map<String, dynamic>.from(overlayStatus['tableRect']);
           }
         });
       }
     } catch (e) {
       print('Error updating status: $e');
-    }
-  }
-
-  Future<void> _updateOverlayStatus() async {
-    if (!isAssistantActive) return;
-    
-    try {
-      final Map<dynamic, dynamic>? status = await platform.invokeMethod('getOverlayStatus');
-      if (status != null) {
-        setState(() {
-          overlayStatus = Map<String, dynamic>.from(status);
-          isResizeMode = status['isResizeMode'] ?? false;
-          isTableLocked = status['isTableLocked'] ?? true;
-          shotPower = (status['shotPower'] ?? 0.5).toDouble();
-          spinX = (status['spinX'] ?? 0.0).toDouble();
-          spinY = (status['spinY'] ?? 0.0).toDouble();
-          
-          if (status['tableRect'] != null) {
-            tableRect = Map<String, dynamic>.from(status['tableRect']);
-          }
-        });
-      }
-    } catch (e) {
-      print('Error updating overlay status: $e');
     }
   }
 
@@ -204,110 +168,52 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
     return 'Pool Game';
   }
 
-  Future<void> _toggleAssistant() async {
+  Future<void> _toggleGuideline() async {
     if (!hasOverlayPermission) {
       await _requestOverlayPermission();
       return;
     }
 
     try {
-      if (isAssistantActive) {
+      if (isGuidelineActive) {
         await platform.invokeMethod('hideOverlay');
         setState(() {
-          isAssistantActive = false;
-          assistantStatus = 'Inactive';
+          isGuidelineActive = false;
+          guidelineStatus = 'Inactive';
           sessionsCompleted++;
-          overlayStatus.clear();
           tableRect.clear();
         });
       } else {
         await platform.invokeMethod('showOverlay');
         setState(() {
-          isAssistantActive = true;
-          assistantStatus = 'Active - Ready for pool games';
+          isGuidelineActive = true;
+          guidelineStatus = 'Active - Ready for pool games';
         });
-        await Future.delayed(const Duration(milliseconds: 500));
-        _updateOverlayStatus();
       }
     } catch (e) {
-      print('Error toggling assistant: $e');
+      print('Error toggling guideline: $e');
     }
   }
 
   Future<void> _toggleResizeMode() async {
-    if (!isAssistantActive) return;
+    if (!isGuidelineActive) return;
     
     try {
       await platform.invokeMethod('toggleResizeMode');
       await Future.delayed(const Duration(milliseconds: 200));
-      _updateOverlayStatus();
     } catch (e) {
       print('Error toggling resize mode: $e');
     }
   }
 
   Future<void> _toggleTableLock() async {
-    if (!isAssistantActive) return;
+    if (!isGuidelineActive) return;
     
     try {
       await platform.invokeMethod('toggleTableLock');
       await Future.delayed(const Duration(milliseconds: 200));
-      _updateOverlayStatus();
     } catch (e) {
       print('Error toggling table lock: $e');
-    }
-  }
-
-  Future<void> _setShotPower(double power) async {
-    if (!isAssistantActive) return;
-    
-    try {
-      await platform.invokeMethod('setShotPower', {'power': power});
-      setState(() {
-        shotPower = power;
-      });
-    } catch (e) {
-      print('Error setting shot power: $e');
-    }
-  }
-
-  Future<void> _setSpin(double x, double y) async {
-    if (!isAssistantActive) return;
-    
-    try {
-      await platform.invokeMethod('setSpin', {'spinX': x, 'spinY': y});
-      setState(() {
-        spinX = x;
-        spinY = y;
-      });
-    } catch (e) {
-      print('Error setting spin: $e');
-    }
-  }
-
-  Future<void> _toggleCushionShots() async {
-    if (!isAssistantActive) return;
-    
-    try {
-      await platform.invokeMethod('toggleCushionShots');
-      setState(() {
-        showCushionShots = !showCushionShots;
-      });
-    } catch (e) {
-      print('Error toggling cushion shots: $e');
-    }
-  }
-
-  Future<void> _togglePowerIndicator() async {
-    if (!isAssistantActive) return;
-    
-    try {
-      await platform.invokeMethod('togglePowerIndicator');
-      setState(() {
-        showPowerIndicator = !showPowerIndicator;
-      });
-    } catch (e) {
-      print('Error toggling power indicator: $e');
     }
   }
 
@@ -315,16 +221,17 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Advanced Pool Assistant'),
-        backgroundColor: const Color(0xFF16213E),
+        title: const Text('🎱 Simple Pool Guideline'),
+        backgroundColor: const Color(0xFF415A77),
         elevation: 0,
+        centerTitle: true,
         actions: [
           IconButton(
             icon: Icon(
-              isAssistantActive ? Icons.visibility : Icons.visibility_off,
-              color: isAssistantActive ? Colors.green : Colors.grey,
+              isGuidelineActive ? Icons.visibility : Icons.visibility_off,
+              color: isGuidelineActive ? Colors.green : Colors.grey,
             ),
-            onPressed: _toggleAssistant,
+            onPressed: _toggleGuideline,
           ),
         ],
       ),
@@ -332,43 +239,35 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _buildStatusCard(),
+            _buildMainStatusCard(),
             const SizedBox(height: 16),
             
-            if (isAssistantActive) ...[
-              _buildTableControlCard(),
-              const SizedBox(height: 16),
-              _buildAdvancedSettingsCard(),
-              const SizedBox(height: 16),
-              _buildDisplayOptionsCard(),
+            if (isGuidelineActive) ...[
+              _buildTableSetupCard(),
               const SizedBox(height: 16),
             ],
             
             _buildPermissionCard(),
             const SizedBox(height: 16),
-            _buildEnhancedStatsCard(),
+            _buildSimpleStatsCard(),
             const SizedBox(height: 16),
-            _buildAdvancedFeaturesCard(),
-            const SizedBox(height: 16),
-            _buildAdvancedInstructionsCard(),
+            _buildInstructionsCard(),
             const SizedBox(height: 16),
             _buildCurrentAppCard(),
+            const SizedBox(height: 80), // Space for FAB
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _toggleAssistant,
-        backgroundColor: isAssistantActive ? Colors.red[600] : Colors.green[600],
-        icon: Icon(isAssistantActive ? Icons.stop : Icons.play_arrow),
-        label: Text(isAssistantActive ? 'Stop Assistant' : 'Start Assistant'),
+        onPressed: _toggleGuideline,
+        backgroundColor: isGuidelineActive ? Colors.red[600] : Colors.green[600],
+        icon: Icon(isGuidelineActive ? Icons.stop : Icons.play_arrow),
+        label: Text(isGuidelineActive ? 'Stop Guideline' : 'Start Guideline'),
       ),
     );
   }
 
-// Extension methods untuk _AdvancedPoolControllerState class
-// Letakkan semua widget methods di sini
-
-  Widget _buildStatusCard() {
+  Widget _buildMainStatusCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -378,19 +277,19 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
             Row(
               children: [
                 Container(
-                  width: 12,
-                  height: 12,
+                  width: 14,
+                  height: 14,
                   decoration: BoxDecoration(
-                    color: isAssistantActive ? Colors.green : Colors.red,
+                    color: isGuidelineActive ? Colors.green : Colors.red,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 12),
                 const Text(
-                  'Advanced Pool Assistant Status',
+                  'Pool Guideline Status',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -398,37 +297,52 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
             ),
             const SizedBox(height: 16),
             Text(
-              assistantStatus,
+              guidelineStatus,
               style: TextStyle(
-                color: isAssistantActive ? Colors.green[300] : Colors.orange[300],
+                color: isGuidelineActive ? Colors.green[300] : Colors.orange[300],
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: 12),
-            if (isAssistantActive) ...[
-              const Divider(color: Colors.white24),
-              const SizedBox(height: 12),
-              Row(
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green.withOpacity(0.3)),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.smartphone, color: Colors.white70, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Monitoring: ${currentForegroundApp.split('.').last}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
+                  Row(
+                    children: [
+                      Icon(Icons.timeline, color: Colors.green, size: 16),
+                      SizedBox(width: 8),
+                      Text(
+                        'Simple Guideline Features:',
+                        style: TextStyle(color: Colors.green, fontSize: 14, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '• White trajectory line from cue ball\n'
+                    '• Extended dashed guideline for aiming\n'
+                    '• Auto-detect pool games (8 Ball Pool, etc)\n'
+                    '• Manual table positioning',
+                    style: TextStyle(color: Colors.green, fontSize: 12),
                   ),
                 ],
               ),
-            ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTableControlCard() {
+  Widget _buildTableSetupCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -436,7 +350,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Table Setup & Control',
+              'Table Setup',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -455,7 +369,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
                     style: ElevatedButton.styleFrom(
                       backgroundColor: isResizeMode ? Colors.orange : Colors.blue,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
@@ -464,11 +378,11 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
                   child: ElevatedButton.icon(
                     onPressed: _toggleTableLock,
                     icon: Icon(isTableLocked ? Icons.lock : Icons.lock_open),
-                    label: Text(isTableLocked ? 'Unlock' : 'Lock'),
+                    label: Text(isTableLocked ? 'Locked' : 'Unlocked'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isTableLocked ? Colors.red : Colors.green,
+                      backgroundColor: isTableLocked ? Colors.green : Colors.red,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
@@ -488,29 +402,16 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
                   Row(
                     children: [
                       Icon(
-                        isResizeMode ? Icons.crop_free : Icons.visibility,
-                        color: isResizeMode ? Colors.orange : Colors.blue,
+                        isTableLocked ? Icons.check_circle : Icons.settings,
+                        color: isTableLocked ? Colors.green : Colors.orange,
                         size: 16,
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        'Mode: ${isResizeMode ? "Resize Active" : "Ready for Aiming"}',
-                        style: const TextStyle(color: Colors.white70, fontSize: 14),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(
-                        isTableLocked ? Icons.lock : Icons.lock_open,
-                        color: isTableLocked ? Colors.red : Colors.green,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Table: ${isTableLocked ? "Locked & Ready" : "Setup Mode"}',
-                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                      Expanded(
+                        child: Text(
+                          'Status: ${isTableLocked ? "Ready for guideline" : "Setup mode"}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 14),
+                        ),
                       ),
                     ],
                   ),
@@ -520,205 +421,17 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
                       children: [
                         const Icon(Icons.crop_landscape, color: Colors.cyan, size: 16),
                         const SizedBox(width: 8),
-                        Text(
-                          'Size: ${tableRect['width']?.toInt() ?? 0}x${tableRect['height']?.toInt() ?? 0}px',
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
+                        Expanded(
+                          child: Text(
+                            'Table Size: ${tableRect['width']?.toInt() ?? 0}x${tableRect['height']?.toInt() ?? 0}px',
+                            style: const TextStyle(color: Colors.white70, fontSize: 14),
+                          ),
                         ),
                       ],
                     ),
                   ],
                 ],
               ),
-            ),
-            
-            if (isResizeMode || !isTableLocked) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.info, color: Colors.orange, size: 16),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Table Setup Mode:',
-                          style: TextStyle(color: Colors.orange, fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '• Open your pool game\n'
-                      '• Drag corner handles to resize table\n'
-                      '• Drag center handle to move table\n'
-                      '• Lock table when positioned correctly',
-                      style: TextStyle(color: Colors.orange, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAdvancedSettingsCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Shot Controls',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            Row(
-              children: [
-                const Icon(Icons.flash_on, color: Colors.yellow, size: 20),
-                const SizedBox(width: 8),
-                const Text('Power:', style: TextStyle(color: Colors.white, fontSize: 16)),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Slider(
-                    value: shotPower,
-                    min: 0.0,
-                    max: 1.0,
-                    divisions: 20,
-                    label: '${(shotPower * 100).round()}%',
-                    activeColor: shotPower < 0.5 ? Colors.green : shotPower < 0.8 ? Colors.yellow : Colors.red,
-                    onChanged: (value) {
-                      _setShotPower(value);
-                    },
-                  ),
-                ),
-                Text(
-                  '${(shotPower * 100).round()}%',
-                  style: TextStyle(
-                    color: shotPower < 0.5 ? Colors.green : Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 20),
-            
-            const Text(
-              'Cue Ball Spin:',
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 12),
-            
-            Row(
-              children: [
-                const Icon(Icons.swap_horiz, color: Colors.cyan, size: 20),
-                const SizedBox(width: 8),
-                const Text('Left/Right:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Slider(
-                    value: spinX,
-                    min: -1.0,
-                    max: 1.0,
-                    divisions: 20,
-                    label: spinX == 0 ? 'Center' : spinX < 0 ? 'Left ${(-spinX * 100).round()}%' : 'Right ${(spinX * 100).round()}%',
-                    activeColor: Colors.cyan,
-                    onChanged: (value) {
-                      _setSpin(value, spinY);
-                    },
-                  ),
-                ),
-                Text(
-                  spinX == 0 ? 'Center' : spinX < 0 ? 'L${(-spinX * 100).round()}' : 'R${(spinX * 100).round()}',
-                  style: const TextStyle(color: Colors.cyan, fontSize: 12),
-                ),
-              ],
-            ),
-            
-            Row(
-              children: [
-                const Icon(Icons.swap_vert, color: Colors.purple, size: 20),
-                const SizedBox(width: 8),
-                const Text('Top/Bottom:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Slider(
-                    value: spinY,
-                    min: -1.0,
-                    max: 1.0,
-                    divisions: 20,
-                    label: spinY == 0 ? 'Center' : spinY < 0 ? 'Top ${(-spinY * 100).round()}%' : 'Bottom ${(spinY * 100).round()}%',
-                    activeColor: Colors.purple,
-                    onChanged: (value) {
-                      _setSpin(spinX, value);
-                    },
-                  ),
-                ),
-                Text(
-                  spinY == 0 ? 'Center' : spinY < 0 ? 'T${(-spinY * 100).round()}' : 'B${(spinY * 100).round()}',
-                  style: const TextStyle(color: Colors.purple, fontSize: 12),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDisplayOptionsCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Display Options',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            SwitchListTile(
-              title: const Text('Show Cushion Shots', style: TextStyle(color: Colors.white)),
-              subtitle: const Text('Display bank shot predictions', style: TextStyle(color: Colors.white60, fontSize: 12)),
-              value: showCushionShots,
-              activeColor: Colors.cyan,
-              onChanged: (value) {
-                _toggleCushionShots();
-              },
-              secondary: const Icon(Icons.timeline, color: Colors.cyan),
-            ),
-            
-            SwitchListTile(
-              title: const Text('Show Power Indicator', style: TextStyle(color: Colors.white)),
-              subtitle: const Text('Display power bar on overlay', style: TextStyle(color: Colors.white60, fontSize: 12)),
-              value: showPowerIndicator,
-              activeColor: Colors.yellow,
-              onChanged: (value) {
-                _togglePowerIndicator();
-              },
-              secondary: const Icon(Icons.battery_charging_full, color: Colors.yellow),
             ),
           ],
         ),
@@ -734,7 +447,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'System Permissions',
+              'System Permission',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -779,7 +492,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Permission required to show advanced aim assistance over pool games',
+                        'Permission required to show guideline over pool games',
                         style: TextStyle(color: Colors.orange, fontSize: 12),
                       ),
                     ),
@@ -793,7 +506,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
     );
   }
 
-  Widget _buildEnhancedStatsCard() {
+  Widget _buildSimpleStatsCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -801,7 +514,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Session Statistics',
+              'Simple Statistics',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -810,18 +523,15 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
             ),
             const SizedBox(height: 16),
             
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: 1.5,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
+            Row(
               children: [
-                _buildStatCard('Games\nDetected', poolGamesDetected.toString(), Colors.blue, Icons.sports_esports),
-                _buildStatCard('Sessions\nCompleted', sessionsCompleted.toString(), Colors.green, Icons.check_circle),
-                _buildStatCard('Last Game', lastPoolGameDetected == 'None' ? 'None' : lastPoolGameDetected.split(' ')[0], Colors.purple, Icons.history),
-                _buildStatCard('Shots\nAnalyzed', totalShotsAnalyzed.toString(), Colors.orange, Icons.my_location),
+                Expanded(
+                  child: _buildSimpleStatCard('Pool Games\nDetected', poolGamesDetected.toString(), Colors.blue, Icons.sports_esports),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildSimpleStatCard('Sessions\nCompleted', sessionsCompleted.toString(), Colors.green, Icons.check_circle),
+                ),
               ],
             ),
           ],
@@ -830,16 +540,15 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
     );
   }
 
-  Widget _buildStatCard(String label, String value, Color color, IconData icon) {
+  Widget _buildSimpleStatCard(String label, String value, Color color, IconData icon) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(icon, color: color, size: 24),
           const SizedBox(height: 8),
@@ -857,7 +566,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
             textAlign: TextAlign.center,
             style: const TextStyle(
               color: Colors.white70,
-              fontSize: 11,
+              fontSize: 12,
             ),
           ),
         ],
@@ -865,16 +574,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
     );
   }
 
-  Widget _buildAdvancedFeaturesCard() {
-    final features = [
-      {'icon': Icons.touch_app, 'title': 'Touch-Based Aiming', 'desc': 'Tap and drag to set aim direction'},
-      {'icon': Icons.timeline, 'title': 'Multi-Cushion Prediction', 'desc': 'Up to 3 bank shot reflections'},
-      {'icon': Icons.flash_on, 'title': 'Power & Spin Control', 'desc': 'Adjust shot power and cue ball spin'},
-      {'icon': Icons.crop_free, 'title': 'Manual Table Setup', 'desc': 'Resize and position table manually'},
-      {'icon': Icons.visibility, 'title': 'Real-Time Visualization', 'desc': 'Live trajectory and impact prediction'},
-      {'icon': Icons.save, 'title': 'Persistent Settings', 'desc': 'Saves table position and preferences'},
-    ];
-
+  Widget _buildInstructionsCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -882,7 +582,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Advanced Features',
+              'How to Use',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -890,78 +590,12 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
               ),
             ),
             const SizedBox(height: 16),
-            ...features.map((feature) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      feature['icon'] as IconData,
-                      color: Colors.blue,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          feature['title'] as String,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          feature['desc'] as String,
-                          style: const TextStyle(
-                            color: Colors.white60,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            )),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAdvancedInstructionsCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'How to Use Advanced Assistant',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildInstructionStep('1', 'Grant overlay permission if needed'),
-            _buildInstructionStep('2', 'Start Assistant and open your pool game'),
-            _buildInstructionStep('3', 'Use "Resize Table" to fit overlay to game table'),
-            _buildInstructionStep('4', 'Lock table position when aligned properly'),
-            _buildInstructionStep('5', 'Adjust power, spin, and display options'),
-            _buildInstructionStep('6', 'Tap and drag on table to aim shots'),
-            _buildInstructionStep('7', 'View trajectory, cushion shots, and impact points'),
-            _buildInstructionStep('8', 'Return here to adjust settings anytime'),
+            _buildInstructionStep('1', 'Grant overlay permission'),
+            _buildInstructionStep('2', 'Start guideline and open pool game'),
+            _buildInstructionStep('3', 'Use "Resize Table" to position overlay'),
+            _buildInstructionStep('4', 'Lock table when positioned correctly'),
+            _buildInstructionStep('5', 'Tap and drag on table to see guideline'),
+            _buildInstructionStep('6', 'White line shows trajectory direction'),
           ],
         ),
       ),
@@ -978,7 +612,7 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
             width: 24,
             height: 24,
             decoration: const BoxDecoration(
-              color: Colors.blue,
+              color: Colors.green,
               shape: BoxShape.circle,
             ),
             child: Center(
@@ -1060,29 +694,9 @@ class _AdvancedPoolControllerState extends State<AdvancedPoolController>
                 ),
               ],
             ),
-            
-            if (isAssistantActive && overlayStatus.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Divider(color: Colors.white24),
-              const SizedBox(height: 12),
-              const Text(
-                'Overlay Status',
-                style: TextStyle(color: Colors.white60, fontSize: 12),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Active: ${overlayStatus['isActive'] ?? false}\n'
-                'Resize Mode: ${overlayStatus['isResizeMode'] ?? false}\n'
-                'Table Locked: ${overlayStatus['isTableLocked'] ?? true}\n'
-                'Power: ${(shotPower * 100).round()}% | Spin: ${(spinX * 100).round()}, ${(spinY * 100).round()}',
-                style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace'),
-              ),
-            ],
           ],
         ),
       ),
     );
   }
-
-// CLOSING BRACKET FOR THE CLASS
 }
