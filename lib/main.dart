@@ -3,60 +3,58 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 
 void main() {
-  runApp(const SimplePoolGuidelineApp());
+  runApp(const SmartPoolAimApp());
 }
 
-class SimplePoolGuidelineApp extends StatelessWidget {
-  const SimplePoolGuidelineApp({super.key});
+class SmartPoolAimApp extends StatelessWidget {
+  const SmartPoolAimApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Simple Pool Guideline',
+      title: 'Smart Pool Aim Assistant',
       theme: ThemeData(
-        primarySwatch: Colors.green,
-        scaffoldBackgroundColor: const Color(0xFF0D1B2A),
+        primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: const Color(0xFF1A1A2E),
         brightness: Brightness.dark,
-        cardTheme: CardTheme(
-          color: const Color(0xFF1B263B),
-          elevation: 6,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
       ),
-      home: const SimplePoolController(),
+      home: const SmartPoolController(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class SimplePoolController extends StatefulWidget {
-  const SimplePoolController({super.key});
+class SmartPoolController extends StatefulWidget {
+  const SmartPoolController({super.key});
 
   @override
-  State<SimplePoolController> createState() => _SimplePoolControllerState();
+  State<SmartPoolController> createState() => _SmartPoolControllerState();
 }
 
-class _SimplePoolControllerState extends State<SimplePoolController> 
+class _SmartPoolControllerState extends State<SmartPoolController> 
     with WidgetsBindingObserver {
   
   static const platform = MethodChannel('pool_overlay/system');
   
-  // Core Status
+  // Permission & Status
   bool hasOverlayPermission = false;
-  bool isGuidelineActive = false;
+  bool isAssistantActive = false;
   String currentForegroundApp = 'Unknown';
-  String guidelineStatus = 'Inactive';
+  String assistantStatus = 'Inactive';
   
-  // Table Control Status
+  // Overlay Control Status
   bool isResizeMode = false;
   bool isTableLocked = true;
   Map<String, dynamic> tableRect = {};
+  Map<String, dynamic> overlayStatus = {};
   
-  // Simple Stats
+  // Detection Stats
   int poolGamesDetected = 0;
   int sessionsCompleted = 0;
+  String lastPoolGameDetected = 'None';
   
   Timer? statusTimer;
+  Timer? overlayStatusTimer;
 
   @override
   void initState() {
@@ -69,26 +67,29 @@ class _SimplePoolControllerState extends State<SimplePoolController>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     statusTimer?.cancel();
+    overlayStatusTimer?.cancel();
     super.dispose();
   }
 
   void _initializeApp() async {
     await _checkOverlayPermission();
     _startStatusMonitoring();
+    _startOverlayStatusMonitoring();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     
-    if (state == AppLifecycleState.paused && isGuidelineActive) {
+    if (state == AppLifecycleState.paused && isAssistantActive) {
       setState(() {
-        guidelineStatus = 'Monitoring in background...';
+        assistantStatus = 'Monitoring background apps...';
       });
     } else if (state == AppLifecycleState.resumed) {
       setState(() {
-        guidelineStatus = isGuidelineActive ? 'Active - Ready for pool games' : 'Inactive';
+        assistantStatus = isAssistantActive ? 'Active - Waiting for pool game' : 'Inactive';
       });
+      _updateOverlayStatus();
     }
   }
 
@@ -119,8 +120,16 @@ class _SimplePoolControllerState extends State<SimplePoolController>
     });
   }
 
+  void _startOverlayStatusMonitoring() {
+    overlayStatusTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (isAssistantActive) {
+        _updateOverlayStatus();
+      }
+    });
+  }
+
   Future<void> _updateStatus() async {
-    if (!isGuidelineActive) return;
+    if (!isAssistantActive) return;
     
     try {
       final String? foregroundApp = await platform.invokeMethod('getForegroundApp');
@@ -129,28 +138,36 @@ class _SimplePoolControllerState extends State<SimplePoolController>
           currentForegroundApp = foregroundApp;
           
           if (_isPoolGame(foregroundApp)) {
-            guidelineStatus = 'Active - Detecting ${_getGameName(foregroundApp)}';
+            assistantStatus = 'Active - Analyzing ${_getGameName(foregroundApp)}';
+            lastPoolGameDetected = _getGameName(foregroundApp);
             if (poolGamesDetected == 0) poolGamesDetected = 1;
           } else {
-            guidelineStatus = 'Monitoring - Waiting for pool game';
-          }
-        });
-      }
-
-      // Update table status
-      final Map<dynamic, dynamic>? overlayStatus = await platform.invokeMethod('getOverlayStatus');
-      if (overlayStatus != null) {
-        setState(() {
-          isResizeMode = overlayStatus['isResizeMode'] ?? false;
-          isTableLocked = overlayStatus['isTableLocked'] ?? true;
-          
-          if (overlayStatus['tableRect'] != null) {
-            tableRect = Map<String, dynamic>.from(overlayStatus['tableRect']);
+            assistantStatus = 'Monitoring - Waiting for pool game';
           }
         });
       }
     } catch (e) {
       print('Error updating status: $e');
+    }
+  }
+
+  Future<void> _updateOverlayStatus() async {
+    if (!isAssistantActive) return;
+    
+    try {
+      final Map<dynamic, dynamic>? status = await platform.invokeMethod('getOverlayStatus');
+      if (status != null) {
+        setState(() {
+          overlayStatus = Map<String, dynamic>.from(status);
+          isResizeMode = status['isResizeMode'] ?? false;
+          isTableLocked = status['isTableLocked'] ?? true;
+          if (status['tableRect'] != null) {
+            tableRect = Map<String, dynamic>.from(status['tableRect']);
+          }
+        });
+      }
+    } catch (e) {
+      print('Error updating overlay status: $e');
     }
   }
 
@@ -168,50 +185,56 @@ class _SimplePoolControllerState extends State<SimplePoolController>
     return 'Pool Game';
   }
 
-  Future<void> _toggleGuideline() async {
+  Future<void> _toggleAssistant() async {
     if (!hasOverlayPermission) {
       await _requestOverlayPermission();
       return;
     }
 
     try {
-      if (isGuidelineActive) {
+      if (isAssistantActive) {
         await platform.invokeMethod('hideOverlay');
         setState(() {
-          isGuidelineActive = false;
-          guidelineStatus = 'Inactive';
+          isAssistantActive = false;
+          assistantStatus = 'Inactive';
           sessionsCompleted++;
+          overlayStatus.clear();
           tableRect.clear();
         });
       } else {
         await platform.invokeMethod('showOverlay');
         setState(() {
-          isGuidelineActive = true;
-          guidelineStatus = 'Active - Ready for pool games';
+          isAssistantActive = true;
+          assistantStatus = 'Active - Waiting for pool game';
         });
+        // Wait a bit then update overlay status
+        await Future.delayed(const Duration(milliseconds: 500));
+        _updateOverlayStatus();
       }
     } catch (e) {
-      print('Error toggling guideline: $e');
+      print('Error toggling assistant: $e');
     }
   }
 
   Future<void> _toggleResizeMode() async {
-    if (!isGuidelineActive) return;
+    if (!isAssistantActive) return;
     
     try {
       await platform.invokeMethod('toggleResizeMode');
       await Future.delayed(const Duration(milliseconds: 200));
+      _updateOverlayStatus();
     } catch (e) {
       print('Error toggling resize mode: $e');
     }
   }
 
   Future<void> _toggleTableLock() async {
-    if (!isGuidelineActive) return;
+    if (!isAssistantActive) return;
     
     try {
       await platform.invokeMethod('toggleTableLock');
       await Future.delayed(const Duration(milliseconds: 200));
+      _updateOverlayStatus();
     } catch (e) {
       print('Error toggling table lock: $e');
     }
@@ -221,17 +244,16 @@ class _SimplePoolControllerState extends State<SimplePoolController>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🎱 Simple Pool Guideline'),
-        backgroundColor: const Color(0xFF415A77),
+        title: const Text('Smart Pool Aim Assistant'),
+        backgroundColor: const Color(0xFF16213E),
         elevation: 0,
-        centerTitle: true,
         actions: [
           IconButton(
             icon: Icon(
-              isGuidelineActive ? Icons.visibility : Icons.visibility_off,
-              color: isGuidelineActive ? Colors.green : Colors.grey,
+              isAssistantActive ? Icons.visibility : Icons.visibility_off,
+              color: isAssistantActive ? Colors.green : Colors.grey,
             ),
-            onPressed: _toggleGuideline,
+            onPressed: _toggleAssistant,
           ),
         ],
       ),
@@ -239,118 +261,58 @@ class _SimplePoolControllerState extends State<SimplePoolController>
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _buildMainStatusCard(),
+            // Status Card
+            _buildStatusCard(),
             const SizedBox(height: 16),
             
-            if (isGuidelineActive) ...[
-              _buildTableSetupCard(),
+            // Overlay Control Card (only show when active)
+            if (isAssistantActive) ...[
+              _buildOverlayControlCard(),
               const SizedBox(height: 16),
             ],
             
+            // Permission Card
             _buildPermissionCard(),
             const SizedBox(height: 16),
-            _buildSimpleStatsCard(),
+            
+            // Detection Stats Card
+            _buildDetectionStatsCard(),
             const SizedBox(height: 16),
+            
+            // Features Card
+            _buildFeaturesCard(),
+            const SizedBox(height: 16),
+            
+            // Instructions Card
             _buildInstructionsCard(),
             const SizedBox(height: 16),
+            
+            // Current App Info Card
             _buildCurrentAppCard(),
-            const SizedBox(height: 80), // Space for FAB
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _toggleGuideline,
-        backgroundColor: isGuidelineActive ? Colors.red[600] : Colors.green[600],
-        icon: Icon(isGuidelineActive ? Icons.stop : Icons.play_arrow),
-        label: Text(isGuidelineActive ? 'Stop Guideline' : 'Start Guideline'),
+        onPressed: _toggleAssistant,
+        backgroundColor: isAssistantActive ? Colors.red[600] : Colors.green[600],
+        icon: Icon(isAssistantActive ? Icons.stop : Icons.play_arrow),
+        label: Text(isAssistantActive ? 'Stop Assistant' : 'Start Assistant'),
       ),
     );
   }
 
-  Widget _buildMainStatusCard() {
+  Widget _buildOverlayControlCard() {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 14,
-                  height: 14,
-                  decoration: BoxDecoration(
-                    color: isGuidelineActive ? Colors.green : Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Text(
-                  'Pool Guideline Status',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              guidelineStatus,
-              style: TextStyle(
-                color: isGuidelineActive ? Colors.green[300] : Colors.orange[300],
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green.withOpacity(0.3)),
-              ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.timeline, color: Colors.green, size: 16),
-                      SizedBox(width: 8),
-                      Text(
-                        'Simple Guideline Features:',
-                        style: TextStyle(color: Colors.green, fontSize: 14, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    '• White trajectory line from cue ball\n'
-                    '• Extended dashed guideline for aiming\n'
-                    '• Auto-detect pool games (8 Ball Pool, etc)\n'
-                    '• Manual table positioning',
-                    style: TextStyle(color: Colors.green, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTableSetupCard() {
-    return Card(
+      color: const Color(0xFF0F3460),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Table Setup',
+              'Overlay Controls',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -359,6 +321,7 @@ class _SimplePoolControllerState extends State<SimplePoolController>
             ),
             const SizedBox(height: 16),
             
+            // Control Buttons Row
             Row(
               children: [
                 Expanded(
@@ -369,7 +332,6 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                     style: ElevatedButton.styleFrom(
                       backgroundColor: isResizeMode ? Colors.orange : Colors.blue,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
@@ -378,11 +340,10 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                   child: ElevatedButton.icon(
                     onPressed: _toggleTableLock,
                     icon: Icon(isTableLocked ? Icons.lock : Icons.lock_open),
-                    label: Text(isTableLocked ? 'Locked' : 'Unlocked'),
+                    label: Text(isTableLocked ? 'Unlock' : 'Lock'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isTableLocked ? Colors.green : Colors.red,
+                      backgroundColor: isTableLocked ? Colors.red : Colors.green,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
@@ -391,6 +352,7 @@ class _SimplePoolControllerState extends State<SimplePoolController>
             
             const SizedBox(height: 16),
             
+            // Status Info
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -402,16 +364,29 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                   Row(
                     children: [
                       Icon(
-                        isTableLocked ? Icons.check_circle : Icons.settings,
-                        color: isTableLocked ? Colors.green : Colors.orange,
+                        isResizeMode ? Icons.crop_free : Icons.visibility,
+                        color: isResizeMode ? Colors.orange : Colors.blue,
                         size: 16,
                       ),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Status: ${isTableLocked ? "Ready for guideline" : "Setup mode"}',
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
+                      Text(
+                        'Mode: ${isResizeMode ? "Resize Active" : "Normal Display"}',
+                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        isTableLocked ? Icons.lock : Icons.lock_open,
+                        color: isTableLocked ? Colors.red : Colors.green,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Table: ${isTableLocked ? "Locked" : "Unlocked"}',
+                        style: const TextStyle(color: Colors.white70, fontSize: 14),
                       ),
                     ],
                   ),
@@ -421,11 +396,9 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                       children: [
                         const Icon(Icons.crop_landscape, color: Colors.cyan, size: 16),
                         const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Table Size: ${tableRect['width']?.toInt() ?? 0}x${tableRect['height']?.toInt() ?? 0}px',
-                            style: const TextStyle(color: Colors.white70, fontSize: 14),
-                          ),
+                        Text(
+                          'Table: ${tableRect['width']?.toInt() ?? 0}x${tableRect['height']?.toInt() ?? 0}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 14),
                         ),
                       ],
                     ),
@@ -433,6 +406,106 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                 ],
               ),
             ),
+            
+            const SizedBox(height: 12),
+            
+            // Instructions for resize
+            if (isResizeMode || !isTableLocked) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.info, color: Colors.orange, size: 16),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Resize Instructions:',
+                          style: TextStyle(color: Colors.orange, fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '• Go to pool game screen\n'
+                      '• Drag corner handles to resize table\n'
+                      '• Drag center handle to move table\n'
+                      '• Lock table when done',
+                      style: TextStyle(color: Colors.orange, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusCard() {
+    return Card(
+      color: const Color(0xFF0F3460),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: isAssistantActive ? Colors.green : Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Smart Assistant Status',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              assistantStatus,
+              style: TextStyle(
+                color: isAssistantActive ? Colors.green[300] : Colors.orange[300],
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (isAssistantActive) ...[
+              const Divider(color: Colors.white24),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Icon(Icons.smartphone, color: Colors.white70, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Monitoring: ${currentForegroundApp.split('.').last}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -441,13 +514,16 @@ class _SimplePoolControllerState extends State<SimplePoolController>
 
   Widget _buildPermissionCard() {
     return Card(
+      color: const Color(0xFF0F3460),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'System Permission',
+              'System Permissions',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -463,16 +539,15 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                   size: 20,
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Display over other apps',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
                   ),
                 ),
                 if (!hasOverlayPermission)
-                  ElevatedButton(
+                  TextButton(
                     onPressed: _requestOverlayPermission,
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
                     child: const Text('Grant'),
                   ),
               ],
@@ -486,13 +561,13 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.orange.withOpacity(0.3)),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.warning, color: Colors.orange, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
+                    const Icon(Icons.warning, color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(
                       child: Text(
-                        'Permission required to show guideline over pool games',
+                        'Permission required to show aim assistance over pool games',
                         style: TextStyle(color: Colors.orange, fontSize: 12),
                       ),
                     ),
@@ -506,15 +581,18 @@ class _SimplePoolControllerState extends State<SimplePoolController>
     );
   }
 
-  Widget _buildSimpleStatsCard() {
+  Widget _buildDetectionStatsCard() {
     return Card(
+      color: const Color(0xFF0F3460),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Simple Statistics',
+              'Detection Statistics',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -522,16 +600,12 @@ class _SimplePoolControllerState extends State<SimplePoolController>
               ),
             ),
             const SizedBox(height: 16),
-            
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                Expanded(
-                  child: _buildSimpleStatCard('Pool Games\nDetected', poolGamesDetected.toString(), Colors.blue, Icons.sports_esports),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildSimpleStatCard('Sessions\nCompleted', sessionsCompleted.toString(), Colors.green, Icons.check_circle),
-                ),
+                _buildStatItem('Pool Games\nDetected', poolGamesDetected.toString(), Colors.blue),
+                _buildStatItem('Sessions\nCompleted', sessionsCompleted.toString(), Colors.green),
+                _buildStatItem('Last Game\nDetected', lastPoolGameDetected == 'None' ? '-' : lastPoolGameDetected.split(' ')[0], Colors.purple),
               ],
             ),
           ],
@@ -540,49 +614,50 @@ class _SimplePoolControllerState extends State<SimplePoolController>
     );
   }
 
-  Widget _buildSimpleStatCard(String label, String value, Color color, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              color: color,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+  Widget _buildStatItem(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
           ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-            ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildInstructionsCard() {
+  Widget _buildFeaturesCard() {
+    final features = [
+      {'icon': Icons.timeline, 'title': 'Auto Extended Guidelines', 'desc': 'Automatic guideline extension'},
+      {'icon': Icons.swap_horiz, 'title': 'Cushion Shot Prediction', 'desc': 'Bank shot trajectory analysis'},
+      {'icon': Icons.my_location, 'title': 'Cue Ball Path Prediction', 'desc': 'Post-impact ball movement'},
+      {'icon': Icons.crop_free, 'title': 'Manual Table Adjustment', 'desc': 'Resize and position table manually'},
+      {'icon': Icons.insights, 'title': 'AI Image Recognition', 'desc': 'Smart game detection technology'},
+    ];
+
     return Card(
+      color: const Color(0xFF0F3460),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'How to Use',
+              'Smart Features',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -590,12 +665,80 @@ class _SimplePoolControllerState extends State<SimplePoolController>
               ),
             ),
             const SizedBox(height: 16),
-            _buildInstructionStep('1', 'Grant overlay permission'),
-            _buildInstructionStep('2', 'Start guideline and open pool game'),
-            _buildInstructionStep('3', 'Use "Resize Table" to position overlay'),
-            _buildInstructionStep('4', 'Lock table when positioned correctly'),
-            _buildInstructionStep('5', 'Tap and drag on table to see guideline'),
-            _buildInstructionStep('6', 'White line shows trajectory direction'),
+            ...features.map((feature) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      feature['icon'] as IconData,
+                      color: Colors.blue,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          feature['title'] as String,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          feature['desc'] as String,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInstructionsCard() {
+    return Card(
+      color: const Color(0xFF0F3460),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'How to Use Smart Assistant',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildInstructionStep('1', 'Grant overlay permission if needed'),
+            _buildInstructionStep('2', 'Tap "Start Assistant" to activate monitoring'),
+            _buildInstructionStep('3', 'Open any pool/billiard game (8 Ball Pool, etc.)'),
+            _buildInstructionStep('4', 'Use "Resize Table" to adjust overlay to match game table'),
+            _buildInstructionStep('5', 'Lock table position when properly aligned'),
+            _buildInstructionStep('6', 'Smart guidelines will appear during gameplay'),
+            _buildInstructionStep('7', 'Return here to stop or adjust assistant'),
           ],
         ),
       ),
@@ -611,8 +754,8 @@ class _SimplePoolControllerState extends State<SimplePoolController>
           Container(
             width: 24,
             height: 24,
-            decoration: const BoxDecoration(
-              color: Colors.green,
+            decoration: BoxDecoration(
+              color: Colors.blue,
               shape: BoxShape.circle,
             ),
             child: Center(
@@ -640,6 +783,9 @@ class _SimplePoolControllerState extends State<SimplePoolController>
 
   Widget _buildCurrentAppCard() {
     return Card(
+      color: const Color(0xFF0F3460),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -666,9 +812,9 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Foreground App',
-                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                        style: const TextStyle(color: Colors.white60, fontSize: 12),
                       ),
                       Text(
                         currentForegroundApp.split('.').last,
@@ -694,6 +840,24 @@ class _SimplePoolControllerState extends State<SimplePoolController>
                 ),
               ],
             ),
+            
+            // Debug info for overlay status (only when active)
+            if (isAssistantActive && overlayStatus.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Divider(color: Colors.white24),
+              const SizedBox(height: 12),
+              Text(
+                'Overlay Debug Info',
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Active: ${overlayStatus['isActive'] ?? false}\n'
+                'Resize Mode: ${overlayStatus['isResizeMode'] ?? false}\n'
+                'Table Locked: ${overlayStatus['isTableLocked'] ?? true}',
+                style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace'),
+              ),
+            ],
           ],
         ),
       ),
